@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>診断ページ</title>
+<style>
+body{font-family:-apple-system,sans-serif;padding:16px;line-height:1.7;font-size:15px;}
+.ok{color:green;font-weight:bold;}
+.ng{color:red;font-weight:bold;}
+.log{white-space:pre-wrap;background:#f0f0f0;padding:10px;border-radius:8px;margin-top:8px;font-size:13px;word-break:break-all;}
+</style>
+</head>
+<body>
+<h2>Firebase接続 診断</h2>
+<div id="out">準備中…</div>
+
+<script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-database-compat.js"></script>
+<script>
+var out = document.getElementById("out");
+function log(msg, ok){
+  var p = document.createElement("p");
+  p.className = ok===true?"ok":(ok===false?"ng":"");
+  p.textContent = msg;
+  out.appendChild(p);
+}
+
+log("ページ読み込み: OK", true);
+
+try{
+  log("firebaseオブジェクト: " + (typeof firebase !== "undefined" ? "読み込み成功" : "読み込み失敗"), typeof firebase !== "undefined");
+
+  var firebaseConfig = {
+    apiKey: "AIzaSyDtg_yEFQZlTeJOh9JTEh7Jtq5Zqx5Gy1k",
+    authDomain: "pairapp-c1a9a.firebaseapp.com",
+    databaseURL: "https://pairapp-c1a9a-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "pairapp-c1a9a",
+    storageBucket: "pairapp-c1a9a.firebasestorage.app",
+    messagingSenderId: "885549433142",
+    appId: "1:885549433142:web:02685c45e6d7379f89b397"
+  };
+
+  var app = firebase.initializeApp(firebaseConfig);
+  log("firebase.initializeApp: 成功", true);
+
+  var db = firebase.database();
+  log("firebase.database(): 成功", true);
+
+  var gotResponse = false;
+  var ref = db.ref("pairAppState");
+
+  log("データベースへの接続を試みています…（最大10秒待ちます）");
+
+  ref.on("value", function(snapshot){
+    gotResponse = true;
+    log("★ 接続成功！データを受信しました:", true);
+    var pre = document.createElement("div");
+    pre.className = "log";
+    pre.textContent = JSON.stringify(snapshot.val(), null, 2);
+    out.appendChild(pre);
+  }, function(err){
+    gotResponse = true;
+    log("★ 接続エラー: " + err.code + " / " + err.message, false);
+  });
+
+  setTimeout(function(){
+    if (!gotResponse){
+      log("★ 10秒経っても応答がありません（タイムアウト）。ネットワークがこの接続をブロックしている可能性が高いです。", false);
+    }
+  }, 10000);
+
+}catch(e){
+  log("★ JavaScriptエラーが発生しました: " + e.message, false);
+}
+</script>
+</body>
+</html>
