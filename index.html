@@ -296,9 +296,15 @@ function renderTeacher(){
   if (!cls) return h;
 
   h += '<div class="card"><h2>名簿（'+escapeHtml(cls.name)+'）</h2>';
-  h += '<p class="hint">1行に出席番号を1つずつ入力してください（名前は登録しません）。保存すると名簿にない番号はペアから外れます。</p>';
-  h += '<textarea id="roster-text">'+escapeHtml(cls.students.join("\n"))+'</textarea>';
-  h += '<div class="row" style="margin-top:8px"><button class="secondary" onclick="saveRoster()">名簿を保存</button><span class="muted">現在 '+cls.students.length+' 名</span></div>';
+  h += '<p class="hint">出席番号1番から、最大の番号までをまとめて登録します。</p>';
+  h += '<div class="row"><span class="muted">1番から</span><input id="roster-max" type="number" inputmode="numeric" style="width:90px" placeholder="例: 40"><span class="muted">番まで</span><button class="secondary" onclick="generateRosterRange()">名簿を作成</button></div>';
+  h += '<p class="hint" style="margin-top:10px">現在 '+cls.students.length+' 名。欠席・転出・停学などの生徒は、番号をタップすると個別に削除できます。</p>';
+  h += '<div class="chip-list">';
+  cls.students.forEach(function(no){
+    h += '<div class="chip" onclick="removeStudent(\''+no+'\')">'+escapeHtml(no)+' ✕</div>';
+  });
+  if (cls.students.length===0) h += '<span class="muted">まだ登録されていません</span>';
+  h += '</div>';
   h += '<div class="row" style="margin-top:8px"><button class="secondary" onclick="downloadRosterCsv()">CSVでダウンロード</button><button class="secondary" onclick="document.getElementById(\'roster-csv-input\').click()">CSVを読み込む</button><button class="danger" onclick="deleteClass()">このクラスを削除</button></div>';
   h += '</div>';
 
@@ -416,11 +422,21 @@ function setActivityInfo(val){
   pushState();
 }
 
-function saveRoster(){
-  var text = document.getElementById("roster-text").value;
-  var students = parseRosterText(text);
-  if (students.length===0){ alert("名簿が空です。出席番号を1行に1つ入力してください。"); return; }
+function generateRosterRange(){
+  var el = document.getElementById("roster-max");
+  var maxNo = parseInt(toHalfWidth(el.value), 10);
+  if (!maxNo || maxNo < 1){ alert("最大の出席番号を入力してください。"); return; }
+  if (maxNo > 200 && !confirm(maxNo+"名分の名簿を作成します。よろしいですか？")) return;
+  var cls = getClass(teacherClassId);
+  if (cls.students.length > 0 && !confirm("現在の名簿（"+cls.students.length+"名）を1〜"+maxNo+"番で上書きします。よろしいですか？")) return;
+  var students = [];
+  for (var i=1;i<=maxNo;i++){ students.push(String(i)); }
   applyRoster(students);
+}
+function removeStudent(no){
+  var cls = getClass(teacherClassId);
+  if (!confirm(no+"番を名簿から削除しますか？（この番号が入っているペアからも外れます）")) return;
+  applyRoster(cls.students.filter(function(n){ return n!==no; }));
 }
 function applyRoster(students){
   var cls = getClass(teacherClassId);
