@@ -81,6 +81,20 @@ var lastLookupNo = null;
 var teacherUnlocked = false;
 var stateRef = null;
 
+function normalizeState(s){
+  if (!s || !s.classes) return {classes:[]};
+  s.classes.forEach(function(c){
+    if (!c.students) c.students = [];
+    if (!c.activities) c.activities = [];
+    c.activities.forEach(function(a){
+      if (!a.pairs) a.pairs = [];
+      if (!a.notes) a.notes = {};
+      if (typeof a.activityInfo !== "string") a.activityInfo = "";
+      if (typeof a.notesOpen !== "boolean") a.notesOpen = false;
+    });
+  });
+  return s;
+}
 function initFirebase(){
   if (firebaseConfig.apiKey === "CONFIG_ME"){
     document.getElementById("app").innerHTML = '<div class="wrap"><div class="card"><h2>設定が必要です</h2><p>このファイル冒頭の firebaseConfig に、あなたのFirebaseプロジェクトの設定値を入力してください。</p></div></div>';
@@ -91,7 +105,7 @@ function initFirebase(){
   stateRef = db.ref("pairAppState");
   stateRef.on("value", function(snapshot){
     var val = snapshot.val();
-    STATE = (val && val.classes) ? val : {classes:[]};
+    STATE = normalizeState((val && val.classes) ? val : {classes:[]});
     loaded = true;
     document.getElementById("offline-bar").style.display = "none";
     render();
