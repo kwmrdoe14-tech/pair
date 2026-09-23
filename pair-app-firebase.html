@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ペア分けアプリ</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --text:#1a1a1a; --sub:#6b7280; --border:#e5e7eb;
+  --accent:#2563eb; --accent-text:#ffffff; --danger:#dc2626; --chip:#eef2ff;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#111318; --card:#1b1e26; --text:#f0f1f3; --sub:#9aa1ad; --border:#2b2f3a;
+    --accent:#5b8def; --accent-text:#0b1220; --danger:#f87171; --chip:#1f2a44;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;}
+.wrap{max-width:640px;margin:0 auto;padding:16px;}
+.tabs{position:sticky;top:0;padding-top:10px;background:var(--bg);display:flex;gap:8px;margin-bottom:14px;z-index:5;}
+.tab-btn{flex:1;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text);font-size:15px;font-weight:600;cursor:pointer;}
+.tab-btn.active{background:var(--accent);color:var(--accent-text);border-color:var(--accent);}
+h1{font-size:18px;margin:4px 0 14px;}
+h2{font-size:15px;margin:0 0 8px;color:var(--sub);}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;}
+input,textarea,select{width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;font-family:inherit;}
+textarea{min-height:90px;resize:vertical;}
+button{padding:10px 14px;border:none;border-radius:8px;background:var(--accent);color:var(--accent-text);font-size:15px;font-weight:600;cursor:pointer;}
+button.secondary{background:var(--chip);color:var(--text);}
+button.danger{background:transparent;color:var(--danger);padding:4px 8px;font-size:13px;}
+button:disabled{opacity:.5;cursor:default;}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.chip-list{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;}
+.chip{background:var(--chip);border-radius:20px;padding:6px 12px;font-size:14px;cursor:pointer;border:2px solid transparent;}
+.chip.selected{border-color:var(--accent);}
+.pair-item{border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;}
+.pair-item .names{font-weight:600;margin-bottom:4px;}
+.pair-item input{margin-top:6px;font-size:13px;padding:6px;}
+.muted{color:var(--sub);font-size:13px;}
+.result{background:var(--chip);border-radius:12px;padding:16px;margin-top:12px;}
+.result .big{font-size:20px;font-weight:700;margin-bottom:4px;}
+.note-box{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);white-space:pre-wrap;font-size:14px;}
+.hint{font-size:12px;color:var(--sub);margin-top:6px;}
+.offline{position:fixed;top:0;left:0;right:0;background:var(--danger);color:#fff;text-align:center;padding:6px;font-size:13px;z-index:20;}
+</style>
+</head>
+<body>
+<div id="offline-bar" class="offline" style="display:none">サーバーに接続できていません。設定（CONFIG_ME）を確認してください。</div>
+<div id="app"><div class="wrap"><p class="muted">読み込み中…</p></div></div>
+<input type="file" id="roster-csv-input" accept=".csv,text/csv,text/plain" style="display:none">
+<input type="file" id="backup-file-input" accept="application/json" style="display:none">
+
+<!-- ▼▼▼ ここだけ書き換えてください（Firebaseプロジェクトの設定値） ▼▼▼ -->
+<script>
+var firebaseConfig = {
+  apiKey: "AIzaSyDtg_yEFQZlTeJOh9JTEh7Jtq5Zqx5Gy1k",
+  authDomain: "pairapp-c1a9a.firebaseapp.com",
+  databaseURL: "https://pairapp-c1a9a-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pairapp-c1a9a",
+  storageBucket: "pairapp-c1a9a.firebasestorage.app",
+  messagingSenderId: "885549433142",
+  appId: "1:885549433142:web:02685c45e6d7379f89b397"
+};
+</script>
+<!-- ▲▲▲ ここまで ▲▲▲ -->
+
+<script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-database-compat.js"></script>
+
+<script>
+var STATE = {classes:[]};
+var loaded = false;
+var currentTab = "student";
+var manualSelected = [];
+var teacherClassId = null;
+var teacherActivityId = null;
+var studentClassId = null;
+var studentActivityId = null;
+var lastLookupNo = null;
+var teacherUnlocked = false;
+var stateRef = null;
+
+function initFirebase(){
+  if (firebaseConfig.apiKey === "CONFIG_ME"){
+    document.getElementById("app").innerHTML = '<div class="wrap"><div class="card"><h2>設定が必要です</h2><p>このファイル冒頭の firebaseConfig に、あなたのFirebaseプロジェクトの設定値を入力してください。</p></div></div>';
+    return;
+  }
+  firebase.initializeApp(firebaseConfig);
+  var db = firebase.database();
+  stateRef = db.ref("pairAppState");
+  stateRef.on("value", function(snapshot){
+    var val = snapshot.val();
+    STATE = (val && val.classes) ? val : {classes:[]};
+    loaded = true;
+    document.getElementById("offline-bar").style.display = "none";
+    render();
+  }, function(err){
+    document.getElementById("offline-bar").style.display = "block";
+  });
+}
+function pushState(){
+  if (!stateRef) return;
+  stateRef.set(STATE);
+}
+
+function genId(p){ return p+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function getClass(id){ for(var i=0;i<STATE.classes.length;i++){ if(STATE.classes[i].id===id) return STATE.classes[i]; } return null; }
+function getActivity(cls,id){ if(!cls) return null; for(var i=0;i<cls.activities.length;i++){ if(cls.activities[i].id===id) return cls.activities[i]; } return null; }
+function findGroup(activity, no){
+  no = String(no).trim();
+  for (var i=0;i<activity.pairs.length;i++){ if (activity.pairs[i].members.indexOf(no)!==-1) return activity.pairs[i]; }
+  return null;
+}
+function unassigned(cls, activity){
+  var used = {};
+  activity.pairs.forEach(function(g){ g.members.forEach(function(n){ used[n]=true; }); });
+  return cls.students.filter(function(no){ return !used[no]; });
+}
+function toHalfWidth(s){
+  return String(s==null?"":s).replace(/[０-９]/g, function(c){ return String.fromCharCode(c.charCodeAt(0)-0xFEE0); });
+}
+function escapeHtml(s){
+  return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+
+function render(){
+  if (!loaded) return;
+  var app = document.getElementById("app");
+  var html = '<div class="wrap">';
+  html += '<div class="tabs">';
+  html += '<button class="tab-btn'+(currentTab==="student"?" active":"")+'" onclick="setTab(\'student\')">生徒用：相手を調べる</button>';
+  html += '<button class="tab-btn'+(currentTab==="teacher"?" active":"")+'" onclick="setTab(\'teacher\')">先生用：ペア分け</button>';
+  html += '</div>';
+  html += '<h1>ペア分けアプリ</h1>';
+  html += currentTab === "student" ? renderStudent() : renderTeacherGate();
+  html += '</div>';
+  app.innerHTML = html;
+  if (currentTab === "student"){
+    var inp = document.getElementById("lookup-no");
+    if (inp) inp.addEventListener("keydown", function(e){ if(e.key==="Enter") doLookup(); });
+  }
+  if (currentTab === "teacher"){
+    var pinInp = document.getElementById("teacher-pin");
+    if (pinInp) pinInp.addEventListener("keydown", function(e){ if(e.key==="Enter") unlockTeacher(); });
+  }
+}
+
+function classOptions(selectedId){
+  var h = '';
+  STATE.classes.forEach(function(c){
+    h += '<option value="'+c.id+'"'+(c.id===selectedId?" selected":"")+'>'+escapeHtml(c.name)+'</option>';
+  });
+  return h;
+}
+function activityOptions(cls, selectedId){
+  var h = '';
+  if (cls) cls.activities.forEach(function(a){
+    h += '<option value="'+a.id+'"'+(a.id===selectedId?" selected":"")+'>'+escapeHtml(a.name)+'</option>';
+  });
+  return h;
+}
+
+function renderStudent(){
+  if (STATE.classes.length===0) return '<div class="card"><p class="muted">まだクラスが作成されていません。先生用タブでクラスを作成してください。</p></div>';
+  if (!studentClassId || !getClass(studentClassId)) studentClassId = STATE.classes[0].id;
+  var cls = getClass(studentClassId);
+  if (!studentActivityId || !getActivity(cls,studentActivityId)) studentActivityId = cls.activities.length ? cls.activities[0].id : null;
+  var h = '<div class="card">';
+  h += '<h2>クラス</h2><select id="st-class" onchange="onStClass(this.value)">'+classOptions(studentClassId)+'</select>';
+  h += '<h2 style="margin-top:12px">活動</h2>';
+  if (cls.activities.length===0){ h += '<p class="muted">このクラスにはまだ活動がありません。</p></div>'; return h; }
+  h += '<select id="st-activity" onchange="onStActivity(this.value)">'+activityOptions(cls,studentActivityId)+'</select>';
+  h += '<h2 style="margin-top:12px">出席番号</h2>';
+  h += '<div class="row"><input id="lookup-no" inputmode="numeric" placeholder="例: 12"><button onclick="doLookup()">調べる</button></div>';
+  h += '<div id="lookup-result"></div>';
+  h += '</div>';
+  return h;
+}
+function onStClass(id){ studentClassId=id; studentActivityId=null; lastLookupNo=null; render(); }
+function onStActivity(id){ studentActivityId=id; lastLookupNo=null; render(); }
+
+function doLookup(){
+  var cls = getClass(studentClassId);
+  var activity = getActivity(cls, studentActivityId);
+  var box = document.getElementById("lookup-result");
+  var no = toHalfWidth(document.getElementById("lookup-no").value).trim();
+  if (!no){ box.innerHTML=""; lastLookupNo=null; return; }
+  if (cls.students.indexOf(no)===-1){ box.innerHTML = '<div class="result"><p>その出席番号は名簿に見つかりません。番号を確認してください。</p></div>'; lastLookupNo=null; return; }
+  lastLookupNo = no;
+  if (!activity.notes) activity.notes = {};
+  var group = findGroup(activity, no);
+  var out = '';
+  if (!group){
+    out += '<div class="result"><p>出席番号 '+escapeHtml(no)+'　まだペアが発表されていません。</p></div>';
+  } else {
+    var partners = group.members.filter(function(n){ return n!==no; });
+    out += '<div class="result"><div class="big">相手</div>';
+    partners.forEach(function(n){
+      out += '<p>出席番号 '+escapeHtml(n)+'</p>';
+      var pn = activity.notes[n];
+      if (pn) out += '<div class="note-box"><strong>相手が書いた情報</strong><br>'+escapeHtml(pn)+'</div>';
+    });
+    if (group.note){ out += '<div class="note-box"><strong>このペアの活動内容</strong><br>'+escapeHtml(group.note)+'</div>'; }
+    if (activity.activityInfo){ out += '<div class="note-box"><strong>活動について</strong><br>'+escapeHtml(activity.activityInfo)+'</div>'; }
+    out += '</div>';
+  }
+  if (activity.notesOpen){
+    out += '<div class="card" style="margin-top:10px"><h2>自分（'+escapeHtml(no)+'）の情報</h2>';
+    out += '<textarea id="self-note" placeholder="自己紹介など、相手に伝えたい情報を書いてください">'+escapeHtml(activity.notes[no]||"")+'</textarea>';
+    out += '<div class="row" style="margin-top:8px"><button onclick="saveMyNote()">保存する</button></div>';
+    out += '</div>';
+  }
+  box.innerHTML = out;
+}
+function saveMyNote(){
+  if (!lastLookupNo) return;
+  var cls = getClass(studentClassId);
+  var activity = getActivity(cls, studentActivityId);
+  if (!activity.notesOpen){ alert("現在、情報の入力は先生が受け付けていません。"); doLookup(); return; }
+  var el = document.getElementById("self-note");
+  if (!activity.notes) activity.notes = {};
+  activity.notes[lastLookupNo] = el ? el.value : "";
+  pushState();
+  alert("保存しました。");
+}
+
+function renderTeacherGate(){
+  if (STATE.teacherPin && !teacherUnlocked){
+    var h = '<div class="card"><h2>先生用の合言葉を入力してください</h2>';
+    h += '<div class="row"><input id="teacher-pin" type="password" placeholder="合言葉"><button onclick="unlockTeacher()">入る</button></div>';
+    h += '</div>';
+    return h;
+  }
+  return renderTeacher();
+}
+function unlockTeacher(){
+  var el = document.getElementById("teacher-pin");
+  var val = el ? el.value : "";
+  if (STATE.teacherPin && val === STATE.teacherPin){ teacherUnlocked = true; render(); }
+  else { alert("合言葉が違います。"); }
+}
+function lockTeacher(){ teacherUnlocked = false; currentTab = "student"; render(); }
+function saveTeacherPin(){
+  var el = document.getElementById("teacher-pin-set");
+  var val = el ? el.value.trim() : "";
+  if (!val){ alert("合言葉を入力してください。"); return; }
+  STATE.teacherPin = val;
+  pushState();
+  teacherUnlocked = true;
+  alert("合言葉を設定しました。");
+}
+
+function renderTeacher(){
+  var h = '<div class="card"><h2>データのバックアップ</h2>';
+  h += '<p class="hint">データはクラウド上に自動保存され、全端末でリアルタイムに共有されます。念のためのファイル保存はこちらから。</p>';
+  h += '<div class="row"><button class="secondary" onclick="downloadBackup()">バックアップを保存（.json）</button><button class="secondary" onclick="document.getElementById(\'backup-file-input\').click()">バックアップから復元</button></div>';
+  h += '</div>';
+
+  h += '<div class="card"><h2>先生用の合言葉</h2>';
+  h += '<p class="hint">この合言葉を知っている人だけが先生用タブに入れます。生徒には教えないでください。</p>';
+  h += '<div class="row"><input id="teacher-pin-set" type="password" placeholder="'+(STATE.teacherPin?"変更する場合は新しい合言葉":"合言葉を設定（未設定＝誰でも入れます）")+'"><button class="secondary" onclick="saveTeacherPin()">'+(STATE.teacherPin?"変更する":"設定する")+'</button></div>';
+  if (STATE.teacherPin) h += '<div class="row" style="margin-top:8px"><span class="muted">設定済みです</span><button class="danger" onclick="lockTeacher()">今すぐロックする</button></div>';
+  h += '</div>';
+
+  h += '<div class="card"><h2>クラス</h2>';
+  h += '<div class="chip-list">';
+  STATE.classes.forEach(function(c){
+    h += '<div class="chip'+(c.id===teacherClassId?" selected":"")+'" onclick="selectClass(\''+c.id+'\')">'+escapeHtml(c.name)+'</div>';
+  });
+  if (STATE.classes.length===0) h += '<span class="muted">クラスがまだありません</span>';
+  h += '</div>';
+  h += '<div class="row"><input id="new-class-name" placeholder="新しいクラス名（例: 1年A組）"><button class="secondary" onclick="addClass()">クラスを追加</button></div>';
+  h += '</div>';
+
+  if (!teacherClassId || !getClass(teacherClassId)){
+    if (STATE.classes.length) teacherClassId = STATE.classes[0].id;
+  }
+  var cls = getClass(teacherClassId);
+  if (!cls) return h;
+
+  h += '<div class="card"><h2>名簿（'+escapeHtml(cls.name)+'）</h2>';
+  h += '<p class="hint">1行に出席番号を1つずつ入力してください（名前は登録しません）。保存すると名簿にない番号はペアから外れます。</p>';
+  h += '<textarea id="roster-text">'+escapeHtml(cls.students.join("\n"))+'</textarea>';
+  h += '<div class="row" style="margin-top:8px"><button class="secondary" onclick="saveRoster()">名簿を保存</button><span class="muted">現在 '+cls.students.length+' 名</span></div>';
+  h += '<div class="row" style="margin-top:8px"><button class="secondary" onclick="downloadRosterCsv()">CSVでダウンロード</button><button class="secondary" onclick="document.getElementById(\'roster-csv-input\').click()">CSVを読み込む</button><button class="danger" onclick="deleteClass()">このクラスを削除</button></div>';
+  h += '</div>';
+
+  h += '<div class="card"><h2>活動</h2><div class="chip-list">';
+  cls.activities.forEach(function(a){
+    h += '<div class="chip'+(a.id===teacherActivityId?" selected":"")+'" onclick="selectActivity(\''+a.id+'\')">'+escapeHtml(a.name)+'</div>';
+  });
+  if (cls.activities.length===0) h += '<span class="muted">活動がまだありません</span>';
+  h += '</div>';
+  h += '<div class="row"><input id="new-activity-name" placeholder="新しい活動名（例: 自己紹介ワーク）"><button class="secondary" onclick="addActivity()">活動を追加</button></div>';
+  h += '</div>';
+
+  if (!teacherActivityId || !getActivity(cls,teacherActivityId)){
+    if (cls.activities.length) teacherActivityId = cls.activities[0].id;
+  }
+  var activity = getActivity(cls, teacherActivityId);
+  if (!activity) return h;
+
+  h += '<div class="card"><h2>生徒の情報入力（'+escapeHtml(activity.name)+'）</h2>';
+  h += '<p class="hint">生徒が自分の出席番号で自己紹介などを書き込めるようにするかを切り替えます。</p>';
+  h += '<button class="'+(activity.notesOpen?"":"secondary")+'" style="width:100%" onclick="toggleNotesOpen()">'+(activity.notesOpen?"● 受付中（タップで停止）":"○ 停止中（タップで許可）")+'</button>';
+  h += '</div>';
+
+  var un = unassigned(cls, activity);
+  h += '<div class="card"><h2>ペア分け（'+escapeHtml(activity.name)+'）</h2>';
+  h += '<div class="row"><button onclick="randomizeAll()">未割当を全員ランダムにペア分け</button><button class="secondary" onclick="clearAllPairs()">すべて解除</button><button class="danger" onclick="deleteActivity()">この活動を削除</button></div>';
+  h += '<p class="hint" style="margin-top:10px">手動で組む：下から2〜3人選んで「組にする」</p>';
+  h += '<div class="chip-list">';
+  un.forEach(function(no){
+    var sel = manualSelected.indexOf(no)!==-1;
+    h += '<div class="chip'+(sel?" selected":"")+'" onclick="toggleManual(\''+no+'\')">'+escapeHtml(no)+'</div>';
+  });
+  if (un.length===0) h += '<span class="muted">未割当の生徒はいません</span>';
+  h += '</div>';
+  h += '<button class="secondary" onclick="makeManualPair()" '+(manualSelected.length<2?"disabled":"")+'>選択した '+manualSelected.length+' 人を組にする</button>';
+  h += '</div>';
+
+  h += '<div class="card"><h2>現在のペア（'+activity.pairs.length+'組）</h2>';
+  if (activity.pairs.length===0) h += '<p class="muted">まだペアがありません</p>';
+  activity.pairs.forEach(function(g, idx){
+    h += '<div class="pair-item"><div class="names">'+escapeHtml(g.members.join('　/　'))+'</div>';
+    h += '<input placeholder="このペアだけの補足（任意）" value="'+escapeHtml(g.note||"")+'" onchange="setPairNote('+idx+',this.value)">';
+    h += '<div style="margin-top:6px"><button class="danger" onclick="unpair('+idx+')">解除</button></div></div>';
+  });
+  h += '</div>';
+
+  h += '<div class="card"><h2>この活動の情報（任意・全ペア共通）</h2>';
+  h += '<textarea id="activity-info" onchange="setActivityInfo(this.value)" placeholder="例: お互いの好きな食べ物を3分間で紹介し合いましょう">'+escapeHtml(activity.activityInfo||"")+'</textarea>';
+  h += '</div>';
+
+  return h;
+}
+
+function parseRosterText(text){
+  var lines = text.split(/\r?\n/);
+  var out = [];
+  var seen = {};
+  lines.forEach(function(line){
+    var no = toHalfWidth(line.split(",")[0]).trim();
+    if (no && !seen[no]){ seen[no]=true; out.push(no); }
+  });
+  return out;
+}
+
+function setTab(t){ currentTab = t; manualSelected=[]; render(); }
+
+function addClass(){
+  var el = document.getElementById("new-class-name");
+  var name = el.value.trim();
+  if (!name) return;
+  var cls = {id:genId("c"), name:name, students:[], activities:[]};
+  STATE.classes.push(cls);
+  teacherClassId = cls.id;
+  teacherActivityId = null;
+  pushState();
+}
+function selectClass(id){ teacherClassId=id; teacherActivityId=null; manualSelected=[]; render(); }
+function deleteClass(){
+  if (!confirm("このクラスを削除しますか？名簿・活動・ペアもすべて削除されます。")) return;
+  STATE.classes = STATE.classes.filter(function(c){ return c.id!==teacherClassId; });
+  teacherClassId = null; teacherActivityId = null;
+  pushState();
+}
+
+function addActivity(){
+  var el = document.getElementById("new-activity-name");
+  var name = el.value.trim();
+  if (!name) return;
+  var cls = getClass(teacherClassId);
+  if (!cls) return;
+  var activity = {id:genId("a"), name:name, pairs:[], activityInfo:"", notes:{}, notesOpen:false};
+  cls.activities.push(activity);
+  teacherActivityId = activity.id;
+  manualSelected = [];
+  pushState();
+}
+function selectActivity(id){ teacherActivityId=id; manualSelected=[]; render(); }
+function deleteActivity(){
+  if (!confirm("この活動を削除しますか？作成したペアも削除されます。")) return;
+  var cls = getClass(teacherClassId);
+  cls.activities = cls.activities.filter(function(a){ return a.id!==teacherActivityId; });
+  teacherActivityId = null;
+  pushState();
+}
+function toggleNotesOpen(){
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  activity.notesOpen = !activity.notesOpen;
+  pushState();
+}
+function setActivityInfo(val){
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  activity.activityInfo = val;
+  pushState();
+}
+
+function saveRoster(){
+  var text = document.getElementById("roster-text").value;
+  var students = parseRosterText(text);
+  if (students.length===0){ alert("名簿が空です。出席番号を1行に1つ入力してください。"); return; }
+  applyRoster(students);
+}
+function applyRoster(students){
+  var cls = getClass(teacherClassId);
+  cls.students = students;
+  var valid = {};
+  students.forEach(function(no){ valid[no]=true; });
+  cls.activities.forEach(function(a){
+    a.pairs = a.pairs.map(function(g){ return {members: g.members.filter(function(n){ return valid[n]; }), note:g.note}; })
+                     .filter(function(g){ return g.members.length>=2; });
+  });
+  manualSelected = [];
+  pushState();
+}
+function downloadRosterCsv(){
+  var cls = getClass(teacherClassId);
+  if (!cls) return;
+  var blob = new Blob([cls.students.join("\n")], {type:"text/csv;charset=utf-8"});
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (cls.name||"roster")+".csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function toggleManual(no){
+  var i = manualSelected.indexOf(no);
+  if (i===-1) manualSelected.push(no); else manualSelected.splice(i,1);
+  render();
+}
+function makeManualPair(){
+  if (manualSelected.length<2) return;
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  activity.pairs.push({members:manualSelected.slice(), note:""});
+  manualSelected = [];
+  pushState();
+}
+function unpair(idx){
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  activity.pairs.splice(idx,1);
+  pushState();
+}
+function clearAllPairs(){
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  activity.pairs = [];
+  pushState();
+}
+function setPairNote(idx, val){
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  if (activity.pairs[idx]) activity.pairs[idx].note = val;
+  pushState();
+}
+function randomizeAll(){
+  var cls = getClass(teacherClassId);
+  var activity = getActivity(cls, teacherActivityId);
+  var un = unassigned(cls, activity);
+  for (var i=un.length-1;i>0;i--){
+    var j = Math.floor(Math.random()*(i+1));
+    var tmp = un[i]; un[i]=un[j]; un[j]=tmp;
+  }
+  var groups = [];
+  for (var k=0;k<un.length;k+=2){ groups.push(un.slice(k,k+2)); }
+  if (groups.length>1 && groups[groups.length-1].length===1){
+    var last = groups.pop();
+    groups[groups.length-1] = groups[groups.length-1].concat(last);
+  }
+  groups.forEach(function(g){ activity.pairs.push({members:g, note:""}); });
+  pushState();
+}
+
+function dateStr(){
+  var d = new Date();
+  function p(n){ return (n<10?"0":"")+n; }
+  return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"-"+p(d.getHours())+p(d.getMinutes());
+}
+function downloadBackup(){
+  var blob = new Blob([JSON.stringify(STATE, null, 2)], {type:"application/json"});
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "pair-app-backup-"+dateStr()+".json";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+document.getElementById("roster-csv-input").addEventListener("change", function(e){
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(){
+    var students = parseRosterText(String(reader.result));
+    if (students.length===0){ alert("CSVから出席番号を読み取れませんでした。"); return; }
+    applyRoster(students);
+  };
+  reader.readAsText(file, "UTF-8");
+  e.target.value = "";
+});
+document.getElementById("backup-file-input").addEventListener("change", function(e){
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(){
+    try{
+      var s = JSON.parse(String(reader.result));
+      if (!s || !s.classes) throw new Error("invalid");
+      if (!confirm("クラウド上の現在のデータを上書きして復元します。よろしいですか？")) return;
+      STATE = s;
+      teacherClassId = null; teacherActivityId = null; studentClassId = null; studentActivityId = null;
+      pushState();
+      alert("復元しました。");
+    }catch(err){ alert("ファイルを読み込めませんでした。正しいバックアップファイル（.json）か確認してください。"); }
+  };
+  reader.readAsText(file, "UTF-8");
+  e.target.value = "";
+});
+
+initFirebase();
+</script>
+</body>
+</html>
