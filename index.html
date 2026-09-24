@@ -155,6 +155,10 @@ function render(){
   if (currentTab === "student"){
     var inp = document.getElementById("lookup-no");
     if (inp) inp.addEventListener("keydown", function(e){ if(e.key==="Enter") doLookup(); });
+    if (lastLookupNo && inp){
+      inp.value = lastLookupNo;
+      doLookup();
+    }
   }
   if (currentTab === "teacher"){
     var pinInp = document.getElementById("teacher-pin");
