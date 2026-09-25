@@ -108,6 +108,10 @@ function initFirebase(){
     STATE = normalizeState((val && val.classes) ? val : {classes:[]});
     loaded = true;
     document.getElementById("offline-bar").style.display = "none";
+    var active = document.activeElement;
+    if (active && active.id === "self-note"){
+      return;
+    }
     render();
   }, function(err){
     document.getElementById("offline-bar").style.display = "block";
